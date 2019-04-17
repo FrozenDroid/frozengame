@@ -1,0 +1,23 @@
+[package]
+name = "frozengame"
+version = "0.1.0"
+authors = ["Vincent Stakenburg <vincentstakenburg@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+# Vulkano
+vulkano = "0.11.1"
+vulkano-win = "0.11.1"
+vulkano-shaders = "0.11.1"
+
+# Windowing
+winit = "0.19.1"
+
+# Vulkano boilerplate
+fuji = { git = "https://github.com/darkwater/fuji" }
+
+# Reading obj files
+tobj = "0.1.7"
+
+# Utilities
+itertools = "0.8.0"
