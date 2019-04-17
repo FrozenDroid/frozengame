@@ -5,11 +5,13 @@ use core::borrow::{Borrow};
 use std::path::Path;
 use std::fs::File;
 use fuji::Fuji;
-use crate::model::{Model, ModelBuilder, Vertex, Mesh};
+use crate::model::{ModelBuilder, Mesh};
 use vulkano::pipeline::GraphicsPipeline;
 use std::sync::Arc;
+use vulkano::pipeline::vertex::{VertexDefinition, Vertex};
+use vulkano::SafeDeref;
 
-mod model;
+pub mod model;
 
 pub struct FrozenGameBuilder {
     fuji: Fuji,
@@ -34,11 +36,12 @@ pub struct FrozenGameInstance {
 }
 
 impl FrozenGameInstance {
-    pub fn build_model<VD, ID, L, RP>(&self, pipeline: Arc<GraphicsPipeline<VD, L, RP>>) -> ModelBuilder<VD, ID, L, RP>
+    pub fn build_model<VD, VT, IT, L, RP>(&self, pipeline: Arc<GraphicsPipeline<VD, L, RP>>) -> ModelBuilder<VD, VT, IT, L, RP>
         where
-            Mesh<VD, ID>: From<tobj::Mesh> + Clone + Sync + Send,
-            VD: Clone + Sync + Send,
-            ID: Clone + Sync + Send,
+            Arc<GraphicsPipeline<VT, L, RP>>: Clone,
+            Mesh<VT, IT>: From<tobj::Mesh> + Clone + Sync + Send,
+            IT: Clone + Sync + Send,
+            VT: Clone + Sync + Send + Vertex
     {
         ModelBuilder::new(self.fuji.graphics_queue().clone(), pipeline)
     }
