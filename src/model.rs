@@ -8,13 +8,15 @@ use vulkano::device::{Device, Queue};
 use std::sync::Arc;
 use vulkano::pipeline::shader::{ShaderModule, GraphicsEntryPointAbstract, SpecializationConstants};
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
-use vulkano::buffer::{CpuAccessibleBuffer, ImmutableBuffer, BufferUsage, TypedBufferAccess};
+use vulkano::buffer::{CpuAccessibleBuffer, ImmutableBuffer, BufferUsage, TypedBufferAccess, BufferAccess};
 use crate::model::ModelBuilderError::MissingMeshes;
 use vulkano::descriptor::PipelineLayoutAbstract;
 use vulkano::framebuffer::RenderPassAbstract;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
 use vulkano::SafeDeref;
+use vulkano::descriptor::pipeline_layout::PipelineLayoutDesc;
+use vulkano::pipeline::input_assembly::Index;
 
 impl std::convert::From<&tobj::Mesh> for Mesh<Vertex, u32> {
     fn from(mesh: &tobj::Mesh) -> Mesh<Vertex, u32> {
@@ -46,10 +48,10 @@ impl std::convert::From<&tobj::Mesh> for Mesh<Vertex, u32> {
     }
 }
 
-pub struct ModelBuilder<'a, VertexDefinition, Layout, RenderP>
+pub struct ModelBuilder<VertexDefinition, IndexDefinition, Layout, RenderP>
 {
-    queue:                &'a Arc<Queue>,
-    meshes:               Option<Vec<Mesh<Vertex, u32>>>,
+    queue:                Arc<Queue>,
+    meshes:               Option<Vec<Mesh<VertexDefinition, IndexDefinition>>>,
     pipeline:             Arc<GraphicsPipeline<VertexDefinition, Layout, RenderP>>,
 }
 
@@ -59,9 +61,13 @@ pub enum ModelBuilderError {
     MissingFragmentShader,
 }
 
-impl<'a, VertexDefinition, Layout, RenderP> ModelBuilder<'a, VertexDefinition, Layout, RenderP>
+impl<VertexDefinition, IndexDefinition, Layout, RenderP> ModelBuilder<VertexDefinition, IndexDefinition, Layout, RenderP>
+    where
+        Mesh<VertexDefinition, IndexDefinition>: From<tobj::Mesh>,
+        VertexDefinition: Send + Sync + Clone,
+        IndexDefinition: Send + Sync + Clone,
 {
-    pub fn new(queue: &Arc<Queue>, pipeline: Arc<GraphicsPipeline<VertexDefinition, Layout, RenderP>>) -> ModelBuilder<VertexDefinition, Layout, RenderP> {
+    pub fn new(queue: Arc<Queue>, pipeline: Arc<GraphicsPipeline<VertexDefinition, Layout, RenderP>>) -> ModelBuilder<VertexDefinition, IndexDefinition, Layout, RenderP> {
         ModelBuilder {
             queue,
             pipeline,
@@ -81,12 +87,12 @@ impl<'a, VertexDefinition, Layout, RenderP> ModelBuilder<'a, VertexDefinition, L
         let result = tobj::load_obj_buf(obj, |_| Ok((Vec::new(), HashMap::new())));
 
         Self {
-            meshes: result.map(|(mut objs, _)| objs.iter_mut().map(|model| model.mesh.borrow().into()).collect_vec()).ok(),
+            meshes: result.map(|(mut objs, _)| objs.iter_mut().map(|model| model.mesh.into()).collect_vec()).ok(),
             ..self
         }
     }
 
-    pub fn build(mut self) -> Result<Model<Vertex, u32, Layout, RenderP>, ModelBuilderError> {
+    pub fn build(mut self) -> Result<Model<VertexDefinition, IndexDefinition, Layout, RenderP>, ModelBuilderError> {
         if self.meshes.is_none() {
             return Err(MissingMeshes);
         }
@@ -105,7 +111,7 @@ impl<'a, VertexDefinition, Layout, RenderP> ModelBuilder<'a, VertexDefinition, L
         Ok(Model {
             vertex_buffer: vertex_buffer.0.clone(),
             index_buffer: index_buffer.0.clone(),
-            pipeline
+            pipeline: self.pipeline.clone(),
         })
     }
 }
@@ -117,20 +123,23 @@ trait Drawable {
 
 pub struct Model<VertexDefinition, IndexDefinition, Layout, RenderP>
 {
-    pub vertex_buffer: Arc<ImmutableBuffer<[VertexDefinition]>>,
-    pub index_buffer: Arc<ImmutableBuffer<[IndexDefinition]>>,
+    pub vertex_buffer: Arc<BufferAccess + Send + Sync>,
+    pub index_buffer: Arc<TypedBufferAccess<Content = [IndexDefinition]>>,
     pub pipeline: Arc<GraphicsPipeline<VertexDefinition, Layout, RenderP>>,
 }
 
-impl<VertexDefinition, Layout, RenderP> Drawable for Model<VertexDefinition, u32, Layout, RenderP> where
-    VertexDefinition: SafeDeref + Sync + Send + TypedBufferAccess<Content = Vertex>,
+impl<VertexDefinition, IndexDefinition, Layout, RenderP> Drawable for Model<VertexDefinition, IndexDefinition, Layout, RenderP> where
+    IndexDefinition: Index,
+    VertexDefinition: Sync + Send + Clone + BufferAccess,
+    TypedBufferAccess<Content = [IndexDefinition]>: Sync + Send + BufferAccess,
     Layout: PipelineLayoutAbstract + SafeDeref + Sync + Send,
     RenderP: RenderPassAbstract + SafeDeref + Sync + Send,
+    GraphicsPipeline<VertexDefinition, Layout, RenderP>: GraphicsPipelineAbstract,
 {
     type Pipeline = Arc<GraphicsPipeline<VertexDefinition, Layout, RenderP>>;
 
     fn draw(&self, cmd_buf: AutoCommandBufferBuilder<StandardCommandPoolBuilder>) -> AutoCommandBufferBuilder {
-        cmd_buf.draw_indexed(self.pipeline.clone(), &DynamicState::default(), self.vertex_buffer.clone(), self.index_buffer.clone(), (), ()).unwrap()
+        cmd_buf.draw_indexed(self.pipeline.clone(), &DynamicState::default(), vec![self.vertex_buffer.clone()].clone(), self.index_buffer.clone(), (), ()).unwrap()
     }
 }
 
