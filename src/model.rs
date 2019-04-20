@@ -1,7 +1,6 @@
 use std::io::{BufRead, BufReader, Read};
 use std::collections::HashMap;
 use itertools::Itertools;
-use core::borrow::{Borrow};
 use std::path::Path;
 use std::fs::File;
 use vulkano::device::{Device, Queue};
@@ -23,7 +22,7 @@ use std::marker::PhantomData;
 
 impl From<tobj::Mesh> for Mesh<Vertex, u32> {
     fn from(mesh: tobj::Mesh) -> Mesh<Vertex, u32> {
-        mesh.into()
+        Mesh::from(&mesh)
     }
 }
 
@@ -94,18 +93,18 @@ impl<VertexDefinition, VertexType, IndexType, Layout, RenderP> ModelBuilder<Vert
     }
 
     pub fn with_obj<A: BufRead>(self, obj: &mut A) -> Self {
-        let result = tobj::load_obj_buf(obj, |_| Ok((Vec::new(), HashMap::new())));
+        let mut result = tobj::load_obj_buf(obj, |_| Ok((Vec::new(), HashMap::new())));
 
         Self {
-            meshes: result.map(|(objs, _)| objs.into_iter().map(|model| model.mesh.into()).collect_vec()).ok(),
+            meshes: result.map(|(objects, _)| objects.into_iter().map(|model| model.clone().mesh.into()).collect_vec()).ok(),
             ..self
         }
     }
 
     pub fn build(self) -> Result<Model<VertexDefinition, VertexType, IndexType, Layout, RenderP>, ModelBuilderError>
         where
-            VertexType: 'static,
-            IndexType: 'static,
+            VertexType: Send + Sync + 'static,
+            IndexType: Send + Sync + 'static,
     {
         if self.meshes.is_none() {
             return Err(MissingMeshes);
@@ -123,7 +122,7 @@ impl<VertexDefinition, VertexType, IndexType, Layout, RenderP> ModelBuilder<Vert
             indices.into_iter().clone(), BufferUsage::index_buffer(), self.queue.clone(),
         ).unwrap();
         Ok(Model {
-            vertex_buffer: vertex_buffer.0.clone(),
+            vertex_buffer: vec![vertex_buffer.0.clone()],
             index_buffer: index_buffer.0.clone(),
             pipeline: self.pipeline.clone(),
             phantom: PhantomData::default(),
@@ -132,30 +131,50 @@ impl<VertexDefinition, VertexType, IndexType, Layout, RenderP> ModelBuilder<Vert
 }
 
 pub trait Drawable {
-    fn draw<S: DescriptorSetsCollection>(&self, cmd_buf: AutoCommandBufferBuilder, sets: S) -> Result<AutoCommandBufferBuilder, DrawIndexedError>;
+    fn draw<S: DescriptorSetsCollection>(&self, cmd_buf: AutoCommandBufferBuilder, dynamic_state: &DynamicState, sets: S) -> Result<AutoCommandBufferBuilder, DrawIndexedError>;
 }
 
-pub struct Model<VertexDefinition, VertexType, IndexType, Layout, RenderP>
-{
-    pub vertex_buffer: Arc<BufferAccess>,
-    pub index_buffer: Arc<TypedBufferAccess<Content = [IndexType]>>,
+pub struct Model<VertexDefinition, VertexType, IndexType, Layout, RenderP> {
+    pub vertex_buffer: Vec<Arc<BufferAccess + Send + Sync + 'static>>,
+    pub index_buffer: Arc<TypedBufferAccess<Content = [IndexType]> + Sync + Send + 'static>,
     pub pipeline: Arc<GraphicsPipeline<VertexDefinition, Layout, RenderP>>,
     phantom: PhantomData<VertexType>,
 }
 
-impl<VertexDef, VertexType, IndexType, Layout, RenderP> Drawable for Model<VertexDef, VertexType, IndexType, Layout, RenderP> where
-    IndexType: Index + 'static,
-    VertexType: vulkano::pipeline::vertex::Vertex + Sync + Send + Clone + 'static,
-    TypedBufferAccess<Content = [IndexType]>: Sync + Send + BufferAccess,
-    Layout: PipelineLayoutAbstract + SafeDeref + Sync + Send + 'static,
-    RenderP: RenderPassAbstract + Sync + Send + 'static,
-    VertexDef: Send + Sync + 'static,
-    GraphicsPipeline<VertexDef, Layout, RenderP>: GraphicsPipelineAbstract + VertexSource<Vec<Arc<BufferAccess>>>,
+impl<VertexDef, VertexType, IndexType, Layout, RenderP> Drawable for Model<VertexDef, VertexType, IndexType, Layout, RenderP>
+    where
+        Layout: Sync + Send + 'static,
+        RenderP: Sync + Send + 'static,
+        VertexDef: Sync + Send + 'static,
+        IndexType: Index + Sized + Sync + Send + 'static,
+        Arc<TypedBufferAccess<Content = [IndexType]>>: BufferAccess,
+        GraphicsPipeline<VertexDef, Layout, RenderP>: GraphicsPipelineAbstract + VertexSource<(Vec<Arc<BufferAccess + Send + Sync>>)>,
 {
-
-    fn draw<S: DescriptorSetsCollection>(&self, cmd_buf: AutoCommandBufferBuilder<StandardCommandPoolBuilder>, sets: S) -> Result<AutoCommandBufferBuilder, DrawIndexedError> {
-        cmd_buf.draw_indexed(self.pipeline.clone(), &DynamicState::default(), vec![self.vertex_buffer.clone()].clone(), self.index_buffer.clone(), sets, ())
+    fn draw<S: DescriptorSetsCollection>(&self, cmd_buf: AutoCommandBufferBuilder, dynamic_state: &DynamicState, sets: S) -> Result<AutoCommandBufferBuilder, DrawIndexedError>
+    {
+        cmd_buf.draw_indexed(self.pipeline.clone(), dynamic_state, self.vertex_buffer.clone(), self.index_buffer.clone(), sets, ())
     }
+}
+
+pub trait RenderDrawable {
+    type Error;
+
+    fn draw_drawable<T: Drawable, S: DescriptorSetsCollection>(self, drawable: &T, dynamic_state: &DynamicState, sets: S) -> Result<Self, Self::Error>
+        where
+            Self: Sized;
+
+}
+
+impl RenderDrawable for AutoCommandBufferBuilder {
+    type Error = DrawIndexedError;
+
+    fn draw_drawable<T: Drawable, S: DescriptorSetsCollection>(self, drawable: &T, dynamic_state: &DynamicState, sets: S) -> Result<Self, Self::Error>
+        where
+            Self: Sized
+    {
+        drawable.draw(self, dynamic_state, sets)
+    }
+
 }
 
 

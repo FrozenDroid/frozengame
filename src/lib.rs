@@ -12,6 +12,7 @@ use vulkano::pipeline::vertex::{VertexDefinition, Vertex};
 use vulkano::SafeDeref;
 
 pub mod model;
+pub mod camera;
 
 pub struct FrozenGameBuilder {
     fuji: Fuji,
@@ -26,13 +27,13 @@ impl FrozenGameBuilder {
 
     pub fn build(self) -> FrozenGameInstance {
         FrozenGameInstance {
-            fuji: self.fuji
+            fuji: Arc::new(self.fuji)
         }
     }
 }
 
 pub struct FrozenGameInstance {
-    fuji: Fuji,
+    pub fuji: Arc<Fuji>,
 }
 
 impl FrozenGameInstance {
