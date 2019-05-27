@@ -1,20 +1,14 @@
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader};
 use std::collections::HashMap;
 use itertools::Itertools;
 use std::path::Path;
 use std::fs::File;
-use vulkano::device::{Device, Queue};
+use vulkano::device::{Queue};
 use std::sync::Arc;
-use vulkano::pipeline::shader::{ShaderModule, GraphicsEntryPointAbstract, SpecializationConstants};
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
-use vulkano::buffer::{CpuAccessibleBuffer, ImmutableBuffer, BufferUsage, TypedBufferAccess, BufferAccess};
+use vulkano::buffer::{ImmutableBuffer, BufferUsage, TypedBufferAccess, BufferAccess};
 use crate::model::ModelBuilderError::MissingMeshes;
-use vulkano::descriptor::PipelineLayoutAbstract;
-use vulkano::framebuffer::RenderPassAbstract;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState, DrawIndexedError};
-use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
-use vulkano::SafeDeref;
-use vulkano::descriptor::pipeline_layout::PipelineLayoutDesc;
 use vulkano::pipeline::input_assembly::Index;
 use vulkano::descriptor::descriptor_set::DescriptorSetsCollection;
 use vulkano::pipeline::vertex::{VertexSource};
@@ -46,6 +40,7 @@ impl From<&tobj::Mesh> for Mesh<Vertex, u32> {
                     *mesh.normals.get((i * 3) + 1).unwrap(),
                     *mesh.normals.get((i * 3) + 2).unwrap(),
                 ],
+                tex_coords: [0.0f32; 2]
             });
         }
 
@@ -93,7 +88,7 @@ impl<VertexDefinition, VertexType, IndexType, Layout, RenderP> ModelBuilder<Vert
     }
 
     pub fn with_obj<A: BufRead>(self, obj: &mut A) -> Self {
-        let mut result = tobj::load_obj_buf(obj, |_| Ok((Vec::new(), HashMap::new())));
+        let result = tobj::load_obj_buf(obj, |_| Ok((Vec::new(), HashMap::new())));
 
         Self {
             meshes: result.map(|(objects, _)| objects.into_iter().map(|model| model.clone().mesh.into()).collect_vec()).ok(),
@@ -156,38 +151,33 @@ impl<VertexDef, VertexType, IndexType, Layout, RenderP> Drawable for Model<Verte
     }
 }
 
-pub trait RenderDrawable {
+pub trait RenderDrawable where Self: Sized {
     type Error;
 
-    fn draw_drawable<T: Drawable, S: DescriptorSetsCollection>(self, drawable: &T, dynamic_state: &DynamicState, sets: S) -> Result<Self, Self::Error>
-        where
-            Self: Sized;
-
+    fn draw_drawable<T: Drawable, S: DescriptorSetsCollection>(self, drawable: &T, dynamic_state: &DynamicState, sets: S) -> Result<Self, Self::Error>;
 }
 
 impl RenderDrawable for AutoCommandBufferBuilder {
     type Error = DrawIndexedError;
 
     fn draw_drawable<T: Drawable, S: DescriptorSetsCollection>(self, drawable: &T, dynamic_state: &DynamicState, sets: S) -> Result<Self, Self::Error>
-        where
-            Self: Sized
     {
         drawable.draw(self, dynamic_state, sets)
     }
-
 }
 
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Mesh<VertexDefinition, IndexDefinition> {
     pub vertices: Vec<VertexDefinition>,
     pub indices:  Vec<IndexDefinition>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct Vertex {
     pub position: [f32; 3],
     pub normals: [f32; 3],
+    pub tex_coords: [f32; 2],
 }
 
-vulkano::impl_vertex!(Vertex, position, normals);
+vulkano::impl_vertex!(Vertex, position, normals, tex_coords);

@@ -1,6 +1,4 @@
-use cgmath::{Array, Deg, Vector3, Point3, Quaternion, BaseNum, Rotation, One, RelativeEq, Rotation3,  BaseFloat, InnerSpace, Matrix4, EuclideanSpace, SquareMatrix, vec3, Rad};
-use core::borrow::Borrow;
-use cgmath::prelude::Angle;
+use cgmath::{Deg, Vector3, Quaternion, One, RelativeEq, Rotation3,  BaseFloat, Matrix4, vec3};
 
 #[derive(Debug)]
 pub struct Camera<T> {
